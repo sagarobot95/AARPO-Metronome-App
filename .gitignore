@@ -7,3 +7,9 @@ dist/
 *.spec
 *.egg-info/
 .smart_metronome/
+.aarpo_metronome/
+
+# Personal visualiser background images shouldn't be committed; keep only the
+# folder and its instructions.
+visualiser_img/*
+!visualiser_img/README.txt

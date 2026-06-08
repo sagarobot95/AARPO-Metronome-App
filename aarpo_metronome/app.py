@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
+import sys
 import time
+from pathlib import Path
 
 from rich.align import Align
 from rich.text import Text
@@ -27,6 +29,24 @@ LOGO = r"""  __ _   __ _  _ __  _ __    ___
 | (_| || (_| || |   | |_) || (_) |
  \__,_| \__,_||_|   | .__/  \___/
                     |_|"""
+
+
+def visualiser_dir() -> Path:
+    """Folder where users drop background images for the visualiser.
+
+    Lives next to the executable for a frozen build, or at the project root
+    (sibling of the package) when run from source. Created if missing.
+    """
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).resolve().parent
+    else:
+        base = Path(__file__).resolve().parent.parent
+    folder = base / "visualiser_img"
+    try:
+        folder.mkdir(exist_ok=True)
+    except OSError:
+        pass
+    return folder
 
 
 class BeatVisualizer(Static):
@@ -72,29 +92,106 @@ class BeatVisualizer(Static):
         return Align.center(text)
 
 
-class ClickVisualizer(Static):
-    """A sonar-style pulse: every click fires an expanding, fading ring.
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
-    Accents, normal beats and subdivisions get their own colour and reach, so the
-    animation reflects exactly what you hear. Driven by a ~30 fps frame timer that
-    decays each ring's intensity; rings expand outward as they fade.
+
+class ClickVisualizer(Static):
+    """The beat visualiser. Every click fires an expanding, fading ring.
+
+    Two modes:
+
+    * **rings** (default) — a sonar ping on a blank field; accents / beats /
+      subdivisions get their own colour and reach.
+    * **image** — if an image is found in the ``visualiser_img/`` folder it is
+      rendered as a colour dot-mosaic, and each click sweeps a bright wave-crest
+      outward across it (the dots brighten as the ring passes, then settle back).
+
+    Press ``i`` in the app to cycle: rings → each image → rings.
     """
 
-    COLS = 39
-    ROWS = 11
-    FPS = 30
+    COLS = 50
+    ROWS = 14
+    FPS = 24
     DECAY = 0.86  # per-frame intensity multiplier
+    DIM = 0.5     # idle brightness of the background image (so the crest pops)
 
     _PALETTE = {"accent": "red", "beat": "green", "subdivision": "cyan"}
-    _MAX_RADIUS = {"accent": 6.2, "beat": 5.0, "subdivision": 3.0}
+    _REACH = {"accent": 1.0, "beat": 0.8, "subdivision": 0.5}
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, image_dir: str | None = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._pings: list[dict] = []
+        self._was_active = False
+        self._image_dir = image_dir
+        self._images: list = []
+        self._img_index = -1            # -1 => plain rings
+        self._base_grid = None          # ROWS x COLS of (r, g, b), or None
+        self.bg_name = "rings"
+        self._cx = (self.COLS - 1) / 2.0
+        self._cy = (self.ROWS - 1) / 2.0
+        self._maxd = math.hypot(self._cx * 0.5, self._cy)
+        self._thick = 1.4
 
     def on_mount(self) -> None:
+        self._discover_images()
+        if self._images:
+            self._img_index = 0
+            self._load_image(self._images[0])
         self.set_interval(1.0 / self.FPS, self._frame)
+        self.refresh()
 
+    # ----------------------------------------------------------- background images
+    def _discover_images(self) -> None:
+        self._images = []
+        if not self._image_dir:
+            return
+        folder = Path(self._image_dir)
+        if not folder.is_dir():
+            return
+        files = [p for p in folder.iterdir()
+                 if p.is_file() and p.suffix.lower() in IMAGE_EXTS]
+        files.sort(key=lambda p: p.stat().st_mtime, reverse=True)  # newest first
+        self._images = files
+
+    def _load_image(self, path) -> None:
+        try:
+            from PIL import Image, ImageOps
+        except Exception:
+            self._base_grid = None
+            self.bg_name = "rings (pip install pillow for images)"
+            return
+        try:
+            img = Image.open(path).convert("RGB")
+            # Terminal cells are ~2x taller than wide: fit to COLS x (ROWS*2)
+            # preserving aspect (centre-crop), then squash vertically to ROWS.
+            fitted = ImageOps.fit(img, (self.COLS, self.ROWS * 2), Image.LANCZOS)
+            small = fitted.resize((self.COLS, self.ROWS), Image.LANCZOS)
+            px = small.load()
+            self._base_grid = [[px[c, r] for c in range(self.COLS)]
+                               for r in range(self.ROWS)]
+            self.bg_name = path.name
+        except Exception:
+            self._base_grid = None
+            self.bg_name = "rings (image could not be read)"
+
+    def cycle_background(self) -> str:
+        """Cycle through: plain rings -> each image in the folder -> rings."""
+        self._discover_images()
+        options = [None] + self._images       # None = plain rings
+        pos = self._img_index + 1             # current position in options
+        nxt = (pos + 1) % len(options) if options else 0
+        choice = options[nxt] if options else None
+        if choice is None:
+            self._img_index = -1
+            self._base_grid = None
+            self.bg_name = "rings"
+        else:
+            self._img_index = nxt - 1
+            self._load_image(choice)
+        self.refresh()
+        return self.bg_name
+
+    # ----------------------------------------------------------------- animation
     def ping(self, kind: str) -> None:
         """Register a new click to animate."""
         self._pings.append({"i": 1.0, "kind": kind})
@@ -102,37 +199,72 @@ class ClickVisualizer(Static):
             self._pings = self._pings[-8:]
 
     def _frame(self) -> None:
-        if not self._pings:
-            return
-        for ping in self._pings:
-            ping["i"] *= self.DECAY
-        self._pings = [p for p in self._pings if p["i"] > 0.05]
-        self.refresh()
+        if self._pings:
+            for ping in self._pings:
+                ping["i"] *= self.DECAY
+            self._pings = [p for p in self._pings if p["i"] > 0.05]
+            self._was_active = True
+            self.refresh()
+        elif self._was_active:
+            self._was_active = False
+            self.refresh()  # one final paint to settle back to the static image
+
+    def _rings(self):
+        return [(p, (1.0 - p["i"]) * self._maxd * self._REACH[p["kind"]])
+                for p in self._pings]
+
+    def _glow(self, dist, rings, peak):
+        g = 0.0
+        for ping, radius in rings:
+            d = abs(dist - radius)
+            if d <= self._thick:
+                gg = ping["i"] * (1.0 - d / self._thick)
+                if gg > g:
+                    g = gg
+        if dist < 1.0 and peak > 0.82:  # bright core on a fresh click
+            g = max(g, peak)
+        return g
 
     def render(self):
-        cx = (self.COLS - 1) / 2.0
-        cy = (self.ROWS - 1) / 2.0
-        thickness = 1.15
-        rings = [(p, (1.0 - p["i"]) * self._MAX_RADIUS[p["kind"]]) for p in self._pings]
+        rings = self._rings()
         peak = max((p["i"] for p in self._pings), default=0.0)
+        if self._base_grid is not None:
+            return self._render_image(rings, peak)
+        return self._render_rings(rings, peak)
 
+    def _render_image(self, rings, peak):
+        text = Text()
+        grid = self._base_grid
+        for r in range(self.ROWS):
+            row = grid[r]
+            for c in range(self.COLS):
+                dist = math.hypot((c - self._cx) * 0.5, r - self._cy)
+                glow = self._glow(dist, rings, peak)
+                br, bg, bb = row[c]
+                bf = self.DIM + glow                 # brightness factor
+                tw = min(1.0, glow) * 0.6            # whiten the wave-crest
+                rr = min(255, int(br * bf * (1 - tw) + 255 * tw))
+                gg = min(255, int(bg * bf * (1 - tw) + 255 * tw))
+                bb2 = min(255, int(bb * bf * (1 - tw) + 255 * tw))
+                text.append("●", style=f"#{rr:02x}{gg:02x}{bb2:02x}")
+            if r != self.ROWS - 1:
+                text.append("\n")
+        return Align.center(text)
+
+    def _render_rings(self, rings, peak):
         text = Text()
         for row in range(self.ROWS):
             for col in range(self.COLS):
-                # halve horizontal distance so circles look round in a terminal
-                dx = (col - cx) * 0.5
-                dy = row - cy
-                dist = math.hypot(dx, dy)
-
+                dist = math.hypot((col - self._cx) * 0.5, row - self._cy)
                 best = None  # (intensity, kind) of the strongest ring touching here
                 for ping, radius in rings:
-                    if abs(dist - radius) <= thickness and (
+                    if abs(dist - radius) <= self._thick and (
                         best is None or ping["i"] > best[0]
                     ):
                         best = (ping["i"], ping["kind"])
 
-                if dist < 0.8 and peak > 0.82:
-                    text.append("✦", style="bold white")  # bright core on a fresh click
+                if dist < 1.0 and peak > 0.82:
+                    text.append("✦", style="bold white")
                 elif best is not None:
                     inten, kind = best
                     color = self._PALETTE[kind]
@@ -143,7 +275,7 @@ class ClickVisualizer(Static):
                     else:
                         glyph, style = "·", f"dim {color}"
                     text.append(glyph, style=style)
-                elif dist < 0.8:
+                elif dist < 1.0:
                     text.append("·", style="grey30")  # faint idle centre
                 else:
                     text.append(" ")
@@ -215,7 +347,7 @@ class MetronomeApp(App):
         color: $accent;
     }
     ClickVisualizer {
-        height: 11;
+        height: 14;
         content-align: center middle;
         margin: 0;
     }
@@ -244,6 +376,7 @@ class MetronomeApp(App):
         ("b", "cycle_beats", "Beats/bar"),
         ("v", "cycle_subdiv", "Subdivision"),
         ("a", "toggle_accent", "Accent"),
+        ("i", "cycle_background", "Visualiser bg"),
         ("s", "save_preset", "Save preset"),
         ("l", "load_preset", "Load preset"),
         ("r", "reset", "Reset"),
@@ -287,7 +420,7 @@ class MetronomeApp(App):
                     yield Static(id="subdiv")
                     yield Static(id="accent")
             yield Static(id="tempo-bar")
-            yield ClickVisualizer(id="pulse")
+            yield ClickVisualizer(id="pulse", image_dir=str(visualiser_dir()))
             yield BeatVisualizer(id="beats")
             yield Static(id="status")
         yield Footer()
@@ -440,6 +573,10 @@ class MetronomeApp(App):
     def action_toggle_accent(self) -> None:
         self.accent_enabled = not self.accent_enabled
         self._set_status(f"Accent {'enabled' if self.accent_enabled else 'disabled'}")
+
+    def action_cycle_background(self) -> None:
+        name = self.query_one(ClickVisualizer).cycle_background()
+        self._set_status(f"Visualiser: {name}")
 
     def action_tap(self) -> None:
         now = time.perf_counter()

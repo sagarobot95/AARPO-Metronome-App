@@ -7,8 +7,13 @@ set "VENV=%ROOT%.venv"
 
 where py >nul 2>nul && (set "PY=py") || (set "PY=python")
 
-if not exist "%VENV%" (
-    echo Setting up AARPO Metronome ^(first run^)...
+set "NEED=1"
+if exist "%VENV%\Scripts\python.exe" (
+    "%VENV%\Scripts\python.exe" -c "import textual, pygame, PIL" >nul 2>nul && set "NEED=0"
+)
+
+if "%NEED%"=="1" (
+    echo Setting up AARPO Metronome ^(first run on this machine^)...
     %PY% -m venv "%VENV%"
     call "%VENV%\Scripts\activate.bat"
     python -m pip install --upgrade pip >nul

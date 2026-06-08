@@ -21,7 +21,7 @@ fi
 
 venv_ok() {
   [ -x "$VENV/bin/python" ] && \
-    "$VENV/bin/python" -c "import textual, pygame" >/dev/null 2>&1
+    "$VENV/bin/python" -c "import textual, pygame, PIL" >/dev/null 2>&1
 }
 
 if ! venv_ok; then

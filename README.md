@@ -35,6 +35,8 @@ A cross-platform **terminal metronome** with a full TUI (built on
 - 🌈 **Animated visuals** — a **sonar-style click pulse** (expanding, fading rings
   colour-coded per accent / beat / subdivision) plus pulsing beat indicators and a
   live subdivision strip
+- 🖼️ **Custom image visualiser** — drop any image in `visualiser_img/` and it
+  becomes a colour dot-mosaic that the click wave sweeps across; press `i` to cycle
 - 🔈 **Bundled click sounds** — synthesized on first run, no external files needed
 - 🖥️ **Runs anywhere** — Windows, macOS, Linux
 
@@ -83,6 +85,7 @@ python -m aarpo_metronome
 | `b`            | Cycle beats per bar (1–12)              |
 | `v`            | Cycle subdivision (quarter→sixteenth)   |
 | `a`            | Toggle accents on/off                   |
+| `i`            | Cycle visualiser background (rings ↔ images) |
 | `1`–`9`        | Toggle the accent on that beat          |
 | `s`            | Save current setup as a preset          |
 | `l`            | Load / cycle through saved presets      |
@@ -90,6 +93,21 @@ python -m aarpo_metronome
 | `q`            | Quit                                    |
 
 Presets are stored in `~/.aarpo_metronome/presets.json`.
+
+## Custom visualiser backgrounds 🖼️
+
+By default the beat visualiser is a sonar-style ring pulse. You can swap in **any
+image** as the backdrop:
+
+1. Drop an image (`.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.webp`) into the
+   **`visualiser_img/`** folder (next to the app / executable).
+2. Launch the app — the most recently added image is used automatically and
+   rendered as a **colour dot-mosaic**.
+3. Each click sweeps a bright **wave-crest** outward across the image.
+4. Press **`i`** to cycle: plain rings → each image in the folder → rings.
+
+Your images stay private — they're ignored by git. Requires Pillow (installed
+automatically by the launchers).
 
 ## Build a standalone binary (no Python needed by end users)
 

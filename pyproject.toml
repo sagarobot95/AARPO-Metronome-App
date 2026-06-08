@@ -14,6 +14,7 @@ keywords = ["metronome", "music", "tui", "terminal", "textual"]
 dependencies = [
     "textual>=0.60",
     "pygame>=2.5",
+    "pillow>=10.0",
 ]
 
 [project.optional-dependencies]
