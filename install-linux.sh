@@ -22,6 +22,7 @@ Version=1.0
 Name=AARPO Metronome
 Comment=A terminal metronome with BPM, accents, subdivisions and tap tempo
 Exec="$DIR/start-linux.sh"
+Icon=$DIR/img/aarpo-icon.png
 Path=$DIR
 Terminal=false
 Categories=AudioVideo;Audio;Music;

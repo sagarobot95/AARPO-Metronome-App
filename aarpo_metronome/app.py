@@ -8,7 +8,7 @@ import time
 from rich.align import Align
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Center, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Digits, Footer, Header, Static
 
@@ -19,6 +19,14 @@ from .tempo import MAX_SUBDIVISIONS, subdivision_label, tempo_marking
 
 MIN_BEATS = 1
 MAX_BEATS = 12
+
+# ASCII-art "aarpo" wordmark shown at the top of the UI (terminals can't render
+# the PNG logo reliably, so this is the on-brand text equivalent).
+LOGO = r"""  __ _   __ _  _ __  _ __    ___
+ / _` | / _` || '__|| '_ \  / _ \
+| (_| || (_| || |   | |_) || (_) |
+ \__,_| \__,_||_|   | .__/  \___/
+                    |_|"""
 
 
 class BeatVisualizer(Static):
@@ -159,6 +167,13 @@ class MetronomeApp(App):
         border: round $accent;
         padding: 1 2;
     }
+    #logo {
+        width: auto;
+        height: auto;
+        color: #e8c17a;
+        text-style: bold;
+        margin-bottom: 1;
+    }
     #top {
         height: auto;
         margin-bottom: 1;
@@ -260,6 +275,8 @@ class MetronomeApp(App):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(id="main"):
+            with Center():
+                yield Static(LOGO, id="logo")
             with Horizontal(id="top"):
                 with Vertical(id="bpm-box"):
                     yield Static("TEMPO (BPM)", classes="label")

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="img/aarpo-icon.png" alt="AARPO" width="160">
+</p>
+
 # 🎵 AARPO Metronome
 
 A cross-platform **terminal metronome** with a full TUI (built on
