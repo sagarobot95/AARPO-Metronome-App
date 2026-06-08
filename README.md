@@ -35,8 +35,9 @@ A cross-platform **terminal metronome** with a full TUI (built on
 - 🌈 **Animated visuals** — a **sonar-style click pulse** (expanding, fading rings
   colour-coded per accent / beat / subdivision) plus pulsing beat indicators and a
   live subdivision strip
-- 🖼️ **Custom image visualiser** — drop any image in `visualiser_img/` and it
-  becomes a colour dot-mosaic that the click wave sweeps across; press `i` to cycle
+- 🖼️ **Custom image visualiser** — drop any image in `visualiser_img/` and it's
+  rendered right in the terminal as a real image that the click wave ripples
+  across; press `i` to cycle
 - 🔈 **Bundled click sounds** — synthesized on first run, no external files needed
 - 🖥️ **Runs anywhere** — Windows, macOS, Linux
 
@@ -103,8 +104,8 @@ image** as the backdrop:
 1. Drop an image (`.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.webp`) into the
    **`visualiser_img/`** folder (next to the app / executable).
 2. Launch the app — the most recently added image is used automatically and
-   rendered as a **colour dot-mosaic**.
-3. Each click sweeps a bright **wave-crest** outward across the image.
+   rendered as a **real image** (high-detail half-block pixels, not a coarse mosaic).
+3. Each click sweeps a bright **wave-crest** rippling outward across the image.
 4. Press **`i`** to cycle: plain rings → bundled AARPO logo → each of your images → rings.
 5. Press **`,`** / **`.`** to dim / brighten the image so the wave pops just right.
 
@@ -112,10 +113,9 @@ Out of the box (with no image added) the app ships with the **AARPO logo** as th
 default dot-mosaic backdrop. Your own images stay private — they're ignored by git.
 Requires Pillow (installed automatically by the launchers).
 
-> **Tip — sharper dots:** the mosaic resolution adapts to the terminal size (one
-> dot per character cell). For a crisper, higher-resolution image, **maximise the
-> window or zoom the font out** — more cells means more dots. Bold, high-contrast
-> images read best.
+> **Tip — sharper image:** the resolution adapts to the terminal size (each
+> character cell holds two stacked pixels). For a crisper, higher-resolution
+> image, **maximise the window or zoom the font out**.
 
 ## Build a standalone binary (no Python needed by end users)
 

@@ -135,8 +135,11 @@ class ClickVisualizer(Static):
         self._src = None                # the loaded PIL image (contrast-boosted)
         self._grid = None               # colour grid resampled to current size
         self._grid_wh = None
-        self._dist = None               # per-cell distance grid for current size
+        self._dist = None               # per-cell distance grid (rings mode)
         self._geo_wh = None
+        self._pdist = None              # per-pixel distance grid (image mode)
+        self._pmaxd = 0.0
+        self._pthick = 0.0
         self.bg_name = "rings"
         self._brightness = self.BRIGHT
         self._cx = self._cy = self._maxd = self._thick = 0.0
@@ -251,82 +254,104 @@ class ClickVisualizer(Static):
         return min(w, self.MAX_COLS), min(h, self.MAX_ROWS)
 
     def _ensure_geometry(self, w, h) -> None:
+        # Cell-space geometry for rings mode (dots; halve x so circles look round).
         if self._geo_wh == (w, h):
             return
-        self._cx = (w - 1) / 2.0
-        self._cy = (h - 1) / 2.0
-        self._maxd = math.hypot(self._cx * 0.5, self._cy)
+        cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+        self._cx, self._cy = cx, cy
+        self._maxd = math.hypot(cx * 0.5, cy)
         self._thick = max(1.1, self._maxd * 0.11)
-        self._dist = [[math.hypot((c - self._cx) * 0.5, r - self._cy)
+        self._dist = [[math.hypot((c - cx) * 0.5, r - cy)
                        for c in range(w)] for r in range(h)]
         self._geo_wh = (w, h)
 
-    def _ensure_grid(self, w, h) -> None:
+    def _ensure_image(self, w, h) -> None:
+        # 'Fine' photographic mode: two stacked half-block pixels per text row, so
+        # the picture renders at w x (2h) pixels. Those pixels are ~square, so the
+        # ring distances use no horizontal halving.
         if self._src is None or self._grid_wh == (w, h):
             return
         from PIL import Image, ImageOps
-        # Cells are ~2x taller than wide: fit to w x (h*2) preserving aspect
-        # (centre-crop), then squash vertically to h rows.
-        fitted = ImageOps.fit(self._src, (w, h * 2), Image.LANCZOS)
-        small = fitted.resize((w, h), Image.LANCZOS)
-        px = small.load()
-        self._grid = [[px[c, r] for c in range(w)] for r in range(h)]
+        ph = h * 2
+        fitted = ImageOps.fit(self._src, (w, ph), Image.LANCZOS)
+        px = fitted.load()
+        self._grid = [[px[c, r] for c in range(w)] for r in range(ph)]
+        cx, cy = (w - 1) / 2.0, (ph - 1) / 2.0
+        self._pmaxd = math.hypot(cx, cy)
+        self._pthick = max(2.0, self._pmaxd * 0.11)
+        self._pdist = [[math.hypot(c - cx, r - cy)
+                        for c in range(w)] for r in range(ph)]
         self._grid_wh = (w, h)
 
-    def _rings(self):
-        return [(p, (1.0 - p["i"]) * self._maxd * self._REACH[p["kind"]])
+    def _rings_for(self, maxd):
+        return [(p, (1.0 - p["i"]) * maxd * self._REACH[p["kind"]])
                 for p in self._pings]
 
-    def _glow(self, dist, rings, peak):
+    def _glow(self, dist, rings, peak, thick, core):
         g = 0.0
         for ping, radius in rings:
             d = abs(dist - radius)
-            if d <= self._thick:
-                gg = ping["i"] * (1.0 - d / self._thick)
+            if d <= thick:
+                gg = ping["i"] * (1.0 - d / thick)
                 if gg > g:
                     g = gg
-        if dist < 1.2 and peak > 0.82:  # bright core on a fresh click
+        if dist < core and peak > 0.82:  # bright crest on a fresh click
             g = max(g, peak)
         return g
 
+    @staticmethod
+    def _shade(color, glow, b):
+        br, bg, bb = color
+        bf = b + glow                    # brighten
+        tw = min(1.0, glow) * 0.7        # ...and whiten toward the crest
+        return (min(255, int(br * bf * (1 - tw) + 255 * tw)),
+                min(255, int(bg * bf * (1 - tw) + 255 * tw)),
+                min(255, int(bb * bf * (1 - tw) + 255 * tw)))
+
     def render(self):
         w, h = self._dims()
-        self._ensure_geometry(w, h)
-        rings = self._rings()
         peak = max((p["i"] for p in self._pings), default=0.0)
         if self._src is not None:
-            self._ensure_grid(w, h)
-            return self._render_image(w, h, rings, peak)
-        return self._render_rings(w, h, rings, peak)
+            self._ensure_image(w, h)
+            return self._render_image(w, h, peak)
+        self._ensure_geometry(w, h)
+        return self._render_rings(w, h, self._rings_for(self._maxd), peak)
 
-    def _render_image(self, w, h, rings, peak):
+    def _render_image(self, w, h, peak):
+        # Half-block render: '▀' upper half takes the foreground colour (top pixel),
+        # lower half the background colour (bottom pixel) — a real image at 2x the
+        # vertical resolution. The click wave brightens/whitens pixels it sweeps.
         text = Text()
-        grid, dist, b = self._grid, self._dist, self._brightness
+        grid, dist, b = self._grid, self._pdist, self._brightness
+        rings = self._rings_for(self._pmaxd)
+        thick = self._pthick
         for r in range(h):
-            crow, drow = grid[r], dist[r]
+            top, bot = 2 * r, 2 * r + 1
+            tc, td = grid[top], dist[top]
+            bc, bd = grid[bot], dist[bot]
             for c in range(w):
-                glow = self._glow(drow[c], rings, peak)
-                br, bg, bb = crow[c]
-                bf = b + glow                        # brightness factor
-                tw = min(1.0, glow) * 0.7            # whiten the wave-crest
-                rr = min(255, int(br * bf * (1 - tw) + 255 * tw))
-                gg = min(255, int(bg * bf * (1 - tw) + 255 * tw))
-                bb2 = min(255, int(bb * bf * (1 - tw) + 255 * tw))
-                text.append("●", style=f"#{rr:02x}{gg:02x}{bb2:02x}")
+                tg = self._glow(td[c], rings, peak, thick, 2.0)
+                bgw = self._glow(bd[c], rings, peak, thick, 2.0)
+                tr, tgc, tb = self._shade(tc[c], tg, b)
+                lr, lgc, lb = self._shade(bc[c], bgw, b)
+                text.append(
+                    "▀",
+                    style=f"#{tr:02x}{tgc:02x}{tb:02x} on #{lr:02x}{lgc:02x}{lb:02x}",
+                )
             if r != h - 1:
                 text.append("\n")
         return Align.center(text)
 
     def _render_rings(self, w, h, rings, peak):
         text = Text()
-        dist = self._dist
+        dist, thick = self._dist, self._thick
         for row in range(h):
             drow = dist[row]
             for col in range(w):
                 d = drow[col]
                 best = None  # (intensity, kind) of the strongest ring touching here
                 for ping, radius in rings:
-                    if abs(d - radius) <= self._thick and (
+                    if abs(d - radius) <= thick and (
                         best is None or ping["i"] > best[0]
                     ):
                         best = (ping["i"], ping["kind"])
