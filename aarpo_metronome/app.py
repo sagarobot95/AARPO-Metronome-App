@@ -110,11 +110,15 @@ class ClickVisualizer(Static):
     Press ``i`` in the app to cycle: rings → each image → rings.
     """
 
-    COLS = 50
-    ROWS = 14
-    FPS = 24
-    DECAY = 0.86  # per-frame intensity multiplier
-    DIM = 0.5     # idle brightness of the background image (so the crest pops)
+    # The dot grid fills whatever space the widget is given (one dot per terminal
+    # cell), capped for performance. Bigger / zoomed-out terminals => more dots =>
+    # a sharper, higher-resolution halftone image.
+    MAX_COLS = 120
+    MAX_ROWS = 34
+    FALLBACK = (72, 22)   # before the first layout pass
+    FPS = 16
+    DECAY = 0.88          # per-frame intensity multiplier
+    BRIGHT = 0.92         # idle image brightness (near full so dots stay vivid)
 
     _PALETTE = {"accent": "red", "beat": "green", "subdivision": "cyan"}
     _REACH = {"accent": 1.0, "beat": 0.8, "subdivision": 0.5}
@@ -128,13 +132,14 @@ class ClickVisualizer(Static):
         self._default_image = default_image
         self._images: list = []
         self._current = None            # None => plain rings, else a Path
-        self._base_grid = None          # ROWS x COLS of (r, g, b), or None
+        self._src = None                # the loaded PIL image (contrast-boosted)
+        self._grid = None               # colour grid resampled to current size
+        self._grid_wh = None
+        self._dist = None               # per-cell distance grid for current size
+        self._geo_wh = None
         self.bg_name = "rings"
-        self._brightness = self.DIM     # idle image brightness (adjustable)
-        self._cx = (self.COLS - 1) / 2.0
-        self._cy = (self.ROWS - 1) / 2.0
-        self._maxd = math.hypot(self._cx * 0.5, self._cy)
-        self._thick = 1.4
+        self._brightness = self.BRIGHT
+        self._cx = self._cy = self._maxd = self._thick = 0.0
 
     def on_mount(self) -> None:
         sources = self._sources()
@@ -163,23 +168,23 @@ class ClickVisualizer(Static):
 
     def _load_image(self, path) -> None:
         try:
-            from PIL import Image, ImageOps
+            from PIL import Image, ImageEnhance, ImageOps
         except Exception:
-            self._base_grid = None
+            self._src = None
             self.bg_name = "rings (pip install pillow for images)"
             return
         try:
             img = Image.open(path).convert("RGB")
-            # Terminal cells are ~2x taller than wide: fit to COLS x (ROWS*2)
-            # preserving aspect (centre-crop), then squash vertically to ROWS.
-            fitted = ImageOps.fit(img, (self.COLS, self.ROWS * 2), Image.LANCZOS)
-            small = fitted.resize((self.COLS, self.ROWS), Image.LANCZOS)
-            px = small.load()
-            self._base_grid = [[px[c, r] for c in range(self.COLS)]
-                               for r in range(self.ROWS)]
+            # Punch up contrast/saturation so the dot-mosaic pops on black.
+            img = ImageOps.autocontrast(img, cutoff=1)
+            img = ImageEnhance.Color(img).enhance(1.35)
+            img = ImageEnhance.Contrast(img).enhance(1.15)
+            self._src = img
+            self._grid = None
+            self._grid_wh = None
             self.bg_name = path.name
         except Exception:
-            self._base_grid = None
+            self._src = None
             self.bg_name = "rings (image could not be read)"
 
     def _sources(self) -> list:
@@ -193,11 +198,11 @@ class ClickVisualizer(Static):
 
     def _select(self, source) -> None:
         if source is None:
-            self._base_grid = None
+            self._src = None
             self.bg_name = "rings"
         else:
             self._load_image(source)
-            if (self._base_grid is not None and self._default_image
+            if (self._src is not None and self._default_image
                     and Path(source) == Path(self._default_image)):
                 self.bg_name = "aarpo (default)"
         self._current = source
@@ -215,7 +220,7 @@ class ClickVisualizer(Static):
 
     def adjust_brightness(self, delta: float) -> int:
         """Tweak the idle image brightness; returns the new value as a percent."""
-        self._brightness = max(0.2, min(0.95, self._brightness + delta))
+        self._brightness = max(0.3, min(1.4, self._brightness + delta))
         self.refresh()
         return round(self._brightness * 100)
 
@@ -237,6 +242,37 @@ class ClickVisualizer(Static):
             self._was_active = False
             self.refresh()  # one final paint to settle back to the static image
 
+    # ----------------------------------------------------------------- geometry
+    def _dims(self):
+        cs = self.content_size
+        w, h = cs.width, cs.height
+        if w < 8 or h < 4:
+            w, h = self.FALLBACK
+        return min(w, self.MAX_COLS), min(h, self.MAX_ROWS)
+
+    def _ensure_geometry(self, w, h) -> None:
+        if self._geo_wh == (w, h):
+            return
+        self._cx = (w - 1) / 2.0
+        self._cy = (h - 1) / 2.0
+        self._maxd = math.hypot(self._cx * 0.5, self._cy)
+        self._thick = max(1.1, self._maxd * 0.11)
+        self._dist = [[math.hypot((c - self._cx) * 0.5, r - self._cy)
+                       for c in range(w)] for r in range(h)]
+        self._geo_wh = (w, h)
+
+    def _ensure_grid(self, w, h) -> None:
+        if self._src is None or self._grid_wh == (w, h):
+            return
+        from PIL import Image, ImageOps
+        # Cells are ~2x taller than wide: fit to w x (h*2) preserving aspect
+        # (centre-crop), then squash vertically to h rows.
+        fitted = ImageOps.fit(self._src, (w, h * 2), Image.LANCZOS)
+        small = fitted.resize((w, h), Image.LANCZOS)
+        px = small.load()
+        self._grid = [[px[c, r] for c in range(w)] for r in range(h)]
+        self._grid_wh = (w, h)
+
     def _rings(self):
         return [(p, (1.0 - p["i"]) * self._maxd * self._REACH[p["kind"]])
                 for p in self._pings]
@@ -249,49 +285,53 @@ class ClickVisualizer(Static):
                 gg = ping["i"] * (1.0 - d / self._thick)
                 if gg > g:
                     g = gg
-        if dist < 1.0 and peak > 0.82:  # bright core on a fresh click
+        if dist < 1.2 and peak > 0.82:  # bright core on a fresh click
             g = max(g, peak)
         return g
 
     def render(self):
+        w, h = self._dims()
+        self._ensure_geometry(w, h)
         rings = self._rings()
         peak = max((p["i"] for p in self._pings), default=0.0)
-        if self._base_grid is not None:
-            return self._render_image(rings, peak)
-        return self._render_rings(rings, peak)
+        if self._src is not None:
+            self._ensure_grid(w, h)
+            return self._render_image(w, h, rings, peak)
+        return self._render_rings(w, h, rings, peak)
 
-    def _render_image(self, rings, peak):
+    def _render_image(self, w, h, rings, peak):
         text = Text()
-        grid = self._base_grid
-        for r in range(self.ROWS):
-            row = grid[r]
-            for c in range(self.COLS):
-                dist = math.hypot((c - self._cx) * 0.5, r - self._cy)
-                glow = self._glow(dist, rings, peak)
-                br, bg, bb = row[c]
-                bf = self._brightness + glow         # brightness factor
-                tw = min(1.0, glow) * 0.6            # whiten the wave-crest
+        grid, dist, b = self._grid, self._dist, self._brightness
+        for r in range(h):
+            crow, drow = grid[r], dist[r]
+            for c in range(w):
+                glow = self._glow(drow[c], rings, peak)
+                br, bg, bb = crow[c]
+                bf = b + glow                        # brightness factor
+                tw = min(1.0, glow) * 0.7            # whiten the wave-crest
                 rr = min(255, int(br * bf * (1 - tw) + 255 * tw))
                 gg = min(255, int(bg * bf * (1 - tw) + 255 * tw))
                 bb2 = min(255, int(bb * bf * (1 - tw) + 255 * tw))
                 text.append("●", style=f"#{rr:02x}{gg:02x}{bb2:02x}")
-            if r != self.ROWS - 1:
+            if r != h - 1:
                 text.append("\n")
         return Align.center(text)
 
-    def _render_rings(self, rings, peak):
+    def _render_rings(self, w, h, rings, peak):
         text = Text()
-        for row in range(self.ROWS):
-            for col in range(self.COLS):
-                dist = math.hypot((col - self._cx) * 0.5, row - self._cy)
+        dist = self._dist
+        for row in range(h):
+            drow = dist[row]
+            for col in range(w):
+                d = drow[col]
                 best = None  # (intensity, kind) of the strongest ring touching here
                 for ping, radius in rings:
-                    if abs(dist - radius) <= self._thick and (
+                    if abs(d - radius) <= self._thick and (
                         best is None or ping["i"] > best[0]
                     ):
                         best = (ping["i"], ping["kind"])
 
-                if dist < 1.0 and peak > 0.82:
+                if d < 1.2 and peak > 0.82:
                     text.append("✦", style="bold white")
                 elif best is not None:
                     inten, kind = best
@@ -303,11 +343,11 @@ class ClickVisualizer(Static):
                     else:
                         glyph, style = "·", f"dim {color}"
                     text.append(glyph, style=style)
-                elif dist < 1.0:
+                elif d < 1.2:
                     text.append("·", style="grey30")  # faint idle centre
                 else:
                     text.append(" ")
-            if row != self.ROWS - 1:
+            if row != h - 1:
                 text.append("\n")
         return Align.center(text)
 
@@ -321,8 +361,8 @@ class MetronomeApp(App):
         align: center middle;
     }
     #main {
-        width: 84;
-        max-width: 96%;
+        width: 104;
+        max-width: 98%;
         height: auto;
         border: round $accent;
         padding: 1 2;
@@ -375,9 +415,11 @@ class MetronomeApp(App):
         color: $accent;
     }
     ClickVisualizer {
-        height: 14;
+        width: 1fr;
+        height: 22;
+        background: black;
         content-align: center middle;
-        margin: 0;
+        margin: 1 0;
     }
     BeatVisualizer {
         height: auto;

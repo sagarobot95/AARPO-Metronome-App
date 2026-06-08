@@ -112,6 +112,11 @@ Out of the box (with no image added) the app ships with the **AARPO logo** as th
 default dot-mosaic backdrop. Your own images stay private — they're ignored by git.
 Requires Pillow (installed automatically by the launchers).
 
+> **Tip — sharper dots:** the mosaic resolution adapts to the terminal size (one
+> dot per character cell). For a crisper, higher-resolution image, **maximise the
+> window or zoom the font out** — more cells means more dots. Bold, high-contrast
+> images read best.
+
 ## Build a standalone binary (no Python needed by end users)
 
 Build **once per OS**, then the resulting file runs natively with nothing else
