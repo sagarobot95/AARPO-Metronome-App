@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aarpo-metronome"
+version = "1.0.0"
+description = "A cross-platform terminal metronome with a TUI — BPM, accents, subdivisions, tap tempo and presets."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "AARPO Metronome" }]
+keywords = ["metronome", "music", "tui", "terminal", "textual"]
+dependencies = [
+    "textual>=0.60",
+    "pygame>=2.5",
+]
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.0"]
+
+[project.scripts]
+metronome = "aarpo_metronome.app:main"
+aarpo-metronome = "aarpo_metronome.app:main"
+
+[tool.setuptools]
+packages = ["aarpo_metronome"]
+
+[tool.setuptools.package-data]
+aarpo_metronome = ["assets/*.wav"]
