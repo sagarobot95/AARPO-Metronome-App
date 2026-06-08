@@ -198,7 +198,11 @@ class ClickVisualizer(Static):
                 if i not in idxs or i in seen:
                     continue
                 seen.add(i)
-                rgb = fr.convert("RGB")
+                # Composite onto black so transparent areas are clean (not a
+                # checkerboard) and blend with the black visualiser background.
+                rgba = fr.convert("RGBA")
+                base = Image.new("RGBA", rgba.size, (0, 0, 0, 255))
+                rgb = Image.alpha_composite(base, rgba).convert("RGB")
                 if self._animated:
                     # mild, consistent boost (autocontrast would flicker per frame)
                     rgb = ImageEnhance.Color(rgb).enhance(1.2)
@@ -313,16 +317,20 @@ class ClickVisualizer(Static):
         self._geo_wh = (w, h)
 
     def _ensure_image(self, w, h) -> None:
-        # Resample every media frame to w x (2h) pixels (two half-block pixels per
-        # text row). Centre-crop fills the whole visualiser. Done once per size.
+        # Resample every media frame to fit ENTIRELY within w x (2h) pixels (two
+        # half-block pixels per text row), preserving aspect and letterboxing on
+        # black — so nothing is cropped. Done once per size.
         if self._frames is None or self._fg_wh == (w, h):
             return
         from PIL import Image, ImageOps
         ph = h * 2
         grids = []
         for fr in self._frames:
-            fitted = ImageOps.fit(fr, (w, ph), Image.LANCZOS)
-            px = fitted.load()
+            contained = ImageOps.contain(fr, (w, ph), Image.LANCZOS)
+            canvas = Image.new("RGB", (w, ph), (0, 0, 0))
+            canvas.paste(contained, ((w - contained.width) // 2,
+                                     (ph - contained.height) // 2))
+            px = canvas.load()
             grids.append([[px[c, r] for c in range(w)] for r in range(ph)])
         self._frame_grids = grids
         self._fg_wh = (w, h)
@@ -457,7 +465,6 @@ class MetronomeApp(App):
     }
     #info-box Static {
         height: 1;
-        margin-bottom: 1;
     }
     #tempo-bar {
         text-align: center;
@@ -466,13 +473,13 @@ class MetronomeApp(App):
     ClickVisualizer {
         width: 1fr;
         height: 1fr;
-        min-height: 10;
+        min-height: 6;
         background: black;
         content-align: center middle;
     }
     BeatVisualizer {
         height: auto;
-        min-height: 4;
+        min-height: 3;
         content-align: center middle;
     }
     #status {
