@@ -113,9 +113,12 @@ Out of the box (with no image added) the app ships with the **AARPO logo** as th
 default dot-mosaic backdrop. Your own images stay private — they're ignored by git.
 Requires Pillow (installed automatically by the launchers).
 
-> **Tip — sharper image:** the resolution adapts to the terminal size (each
-> character cell holds two stacked pixels). For a crisper, higher-resolution
-> image, **maximise the window or zoom the font out**.
+> **Tip — sharper image:** a terminal draws character cells, not pixels, so the
+> image resolution is `columns × (2 × rows)` of whatever space the visualiser is
+> given. **The single biggest lever is terminal size** — maximise the window and
+> **zoom the font out** (e.g. `Ctrl -`). Rough guide: an 80×24 window ≈ 76×24 px,
+> a 200×60 window ≈ 190×80 px (≈4× sharper). The visualiser already expands to
+> fill all the space the layout can spare.
 
 ## Build a standalone binary (no Python needed by end users)
 

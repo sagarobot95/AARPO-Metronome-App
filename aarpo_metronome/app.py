@@ -113,8 +113,8 @@ class ClickVisualizer(Static):
     # The dot grid fills whatever space the widget is given (one dot per terminal
     # cell), capped for performance. Bigger / zoomed-out terminals => more dots =>
     # a sharper, higher-resolution halftone image.
-    MAX_COLS = 120
-    MAX_ROWS = 34
+    MAX_COLS = 220
+    MAX_ROWS = 80
     FALLBACK = (72, 22)   # before the first layout pass
     FPS = 16
     DECAY = 0.88          # per-frame intensity multiplier
@@ -273,6 +273,9 @@ class ClickVisualizer(Static):
             return
         from PIL import Image, ImageOps
         ph = h * 2
+        # Fill the whole visualiser with image (centre-crop). On a wide/short
+        # terminal this puts every scarce cell to use instead of wasting rows on
+        # letterbox bars — maximising the apparent resolution.
         fitted = ImageOps.fit(self._src, (w, ph), Image.LANCZOS)
         px = fitted.load()
         self._grid = [[px[c, r] for c in range(w)] for r in range(ph)]
@@ -386,22 +389,19 @@ class MetronomeApp(App):
         align: center middle;
     }
     #main {
-        width: 104;
-        max-width: 98%;
-        height: auto;
+        width: 98%;
+        height: 100%;
         border: round $accent;
-        padding: 1 2;
+        padding: 0 2;
     }
     #logo {
         width: auto;
         height: auto;
         color: #e8c17a;
         text-style: bold;
-        margin-bottom: 1;
     }
     #top {
         height: auto;
-        margin-bottom: 1;
     }
     #bpm-box {
         width: 2fr;
@@ -436,26 +436,23 @@ class MetronomeApp(App):
     }
     #tempo-bar {
         text-align: center;
-        margin: 1 0;
         color: $accent;
     }
     ClickVisualizer {
         width: 1fr;
-        height: 22;
+        height: 1fr;
+        min-height: 10;
         background: black;
         content-align: center middle;
-        margin: 1 0;
     }
     BeatVisualizer {
         height: auto;
-        min-height: 5;
+        min-height: 4;
         content-align: center middle;
-        margin: 1 0;
     }
     #status {
         text-align: center;
         text-style: bold;
-        margin-top: 1;
     }
     """
 
