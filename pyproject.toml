@@ -28,4 +28,4 @@ aarpo-metronome = "aarpo_metronome.app:main"
 packages = ["aarpo_metronome"]
 
 [tool.setuptools.package-data]
-aarpo_metronome = ["assets/*.wav"]
+aarpo_metronome = ["assets/*.wav", "assets/*.png"]

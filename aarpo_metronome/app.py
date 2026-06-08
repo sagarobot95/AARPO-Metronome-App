@@ -14,6 +14,7 @@ from textual.containers import Center, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Digits, Footer, Header, Static
 
+from .assets import get_asset_dir
 from .audio import create_audio_backend
 from .engine import MAX_BPM, MIN_BPM, MetronomeEngine
 from .presets import Preset, add_preset, load_presets
@@ -118,25 +119,32 @@ class ClickVisualizer(Static):
     _PALETTE = {"accent": "red", "beat": "green", "subdivision": "cyan"}
     _REACH = {"accent": 1.0, "beat": 0.8, "subdivision": 0.5}
 
-    def __init__(self, *args, image_dir: str | None = None, **kwargs) -> None:
+    def __init__(self, *args, image_dir: str | None = None,
+                 default_image: str | None = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._pings: list[dict] = []
         self._was_active = False
         self._image_dir = image_dir
+        self._default_image = default_image
         self._images: list = []
-        self._img_index = -1            # -1 => plain rings
+        self._current = None            # None => plain rings, else a Path
         self._base_grid = None          # ROWS x COLS of (r, g, b), or None
         self.bg_name = "rings"
+        self._brightness = self.DIM     # idle image brightness (adjustable)
         self._cx = (self.COLS - 1) / 2.0
         self._cy = (self.ROWS - 1) / 2.0
         self._maxd = math.hypot(self._cx * 0.5, self._cy)
         self._thick = 1.4
 
     def on_mount(self) -> None:
-        self._discover_images()
+        sources = self._sources()
+        # Start on the newest user image, else the bundled default, else rings.
         if self._images:
-            self._img_index = 0
-            self._load_image(self._images[0])
+            self._select(self._images[0])
+        elif len(sources) > 1:
+            self._select(sources[1])
+        else:
+            self._select(None)
         self.set_interval(1.0 / self.FPS, self._frame)
         self.refresh()
 
@@ -174,22 +182,42 @@ class ClickVisualizer(Static):
             self._base_grid = None
             self.bg_name = "rings (image could not be read)"
 
-    def cycle_background(self) -> str:
-        """Cycle through: plain rings -> each image in the folder -> rings."""
+    def _sources(self) -> list:
+        """Ordered cycle of backgrounds: rings, bundled default, user images."""
         self._discover_images()
-        options = [None] + self._images       # None = plain rings
-        pos = self._img_index + 1             # current position in options
-        nxt = (pos + 1) % len(options) if options else 0
-        choice = options[nxt] if options else None
-        if choice is None:
-            self._img_index = -1
+        sources: list = [None]  # None = plain rings
+        if self._default_image and Path(self._default_image).is_file():
+            sources.append(Path(self._default_image))
+        sources += self._images
+        return sources
+
+    def _select(self, source) -> None:
+        if source is None:
             self._base_grid = None
             self.bg_name = "rings"
         else:
-            self._img_index = nxt - 1
-            self._load_image(choice)
+            self._load_image(source)
+            if (self._base_grid is not None and self._default_image
+                    and Path(source) == Path(self._default_image)):
+                self.bg_name = "aarpo (default)"
+        self._current = source
+
+    def cycle_background(self) -> str:
+        """Cycle through: rings -> bundled default -> each user image -> rings."""
+        sources = self._sources()
+        try:
+            idx = sources.index(self._current)
+        except ValueError:
+            idx = 0
+        self._select(sources[(idx + 1) % len(sources)])
         self.refresh()
         return self.bg_name
+
+    def adjust_brightness(self, delta: float) -> int:
+        """Tweak the idle image brightness; returns the new value as a percent."""
+        self._brightness = max(0.2, min(0.95, self._brightness + delta))
+        self.refresh()
+        return round(self._brightness * 100)
 
     # ----------------------------------------------------------------- animation
     def ping(self, kind: str) -> None:
@@ -241,7 +269,7 @@ class ClickVisualizer(Static):
                 dist = math.hypot((c - self._cx) * 0.5, r - self._cy)
                 glow = self._glow(dist, rings, peak)
                 br, bg, bb = row[c]
-                bf = self.DIM + glow                 # brightness factor
+                bf = self._brightness + glow         # brightness factor
                 tw = min(1.0, glow) * 0.6            # whiten the wave-crest
                 rr = min(255, int(br * bf * (1 - tw) + 255 * tw))
                 gg = min(255, int(bg * bf * (1 - tw) + 255 * tw))
@@ -377,6 +405,8 @@ class MetronomeApp(App):
         ("v", "cycle_subdiv", "Subdivision"),
         ("a", "toggle_accent", "Accent"),
         ("i", "cycle_background", "Visualiser bg"),
+        ("comma", "vis_brightness(-1)", "Dimmer"),
+        ("full_stop", "vis_brightness(1)", "Brighter"),
         ("s", "save_preset", "Save preset"),
         ("l", "load_preset", "Load preset"),
         ("r", "reset", "Reset"),
@@ -420,7 +450,11 @@ class MetronomeApp(App):
                     yield Static(id="subdiv")
                     yield Static(id="accent")
             yield Static(id="tempo-bar")
-            yield ClickVisualizer(id="pulse", image_dir=str(visualiser_dir()))
+            yield ClickVisualizer(
+                id="pulse",
+                image_dir=str(visualiser_dir()),
+                default_image=str(get_asset_dir() / "visualiser_default.png"),
+            )
             yield BeatVisualizer(id="beats")
             yield Static(id="status")
         yield Footer()
@@ -577,6 +611,10 @@ class MetronomeApp(App):
     def action_cycle_background(self) -> None:
         name = self.query_one(ClickVisualizer).cycle_background()
         self._set_status(f"Visualiser: {name}")
+
+    def action_vis_brightness(self, direction: int) -> None:
+        pct = self.query_one(ClickVisualizer).adjust_brightness(0.1 * direction)
+        self._set_status(f"Visualiser brightness: {pct}%")
 
     def action_tap(self) -> None:
         now = time.perf_counter()

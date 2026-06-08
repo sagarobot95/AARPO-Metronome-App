@@ -86,6 +86,7 @@ python -m aarpo_metronome
 | `v`            | Cycle subdivision (quarter→sixteenth)   |
 | `a`            | Toggle accents on/off                   |
 | `i`            | Cycle visualiser background (rings ↔ images) |
+| `,` / `.`      | Visualiser image dimmer / brighter      |
 | `1`–`9`        | Toggle the accent on that beat          |
 | `s`            | Save current setup as a preset          |
 | `l`            | Load / cycle through saved presets      |
@@ -104,10 +105,12 @@ image** as the backdrop:
 2. Launch the app — the most recently added image is used automatically and
    rendered as a **colour dot-mosaic**.
 3. Each click sweeps a bright **wave-crest** outward across the image.
-4. Press **`i`** to cycle: plain rings → each image in the folder → rings.
+4. Press **`i`** to cycle: plain rings → bundled AARPO logo → each of your images → rings.
+5. Press **`,`** / **`.`** to dim / brighten the image so the wave pops just right.
 
-Your images stay private — they're ignored by git. Requires Pillow (installed
-automatically by the launchers).
+Out of the box (with no image added) the app ships with the **AARPO logo** as the
+default dot-mosaic backdrop. Your own images stay private — they're ignored by git.
+Requires Pillow (installed automatically by the launchers).
 
 ## Build a standalone binary (no Python needed by end users)
 
