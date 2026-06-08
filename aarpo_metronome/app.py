@@ -23,13 +23,9 @@ from .tempo import MAX_SUBDIVISIONS, subdivision_label, tempo_marking
 MIN_BEATS = 1
 MAX_BEATS = 12
 
-# ASCII-art "aarpo" wordmark shown at the top of the UI (terminals can't render
-# the PNG logo reliably, so this is the on-brand text equivalent).
-LOGO = r"""  __ _   __ _  _ __  _ __    ___
- / _` | / _` || '__|| '_ \  / _ \
-| (_| || (_| || |   | |_) || (_) |
- \__,_| \__,_||_|   | .__/  \___/
-                    |_|"""
+# Compact one-line "aarpo" wordmark for the top of the UI (kept slim so the
+# visualiser gets the vertical space). The Header already shows the full title.
+LOGO = "━━━━━━━  ✦  a a r p o  ✦  ━━━━━━━"
 
 
 def visualiser_dir() -> Path:
