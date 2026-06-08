@@ -35,9 +35,9 @@ A cross-platform **terminal metronome** with a full TUI (built on
 - 🌈 **Animated visuals** — a **sonar-style click pulse** (expanding, fading rings
   colour-coded per accent / beat / subdivision) plus pulsing beat indicators and a
   live subdivision strip
-- 🖼️ **Custom image visualiser** — drop any image in `visualiser_img/` and it's
-  rendered right in the terminal as a real image that the click wave ripples
-  across; press `i` to cycle
+- 🖼️ **Custom image / GIF visualiser** — drop an image *or an animated GIF* in
+  `visualiser_img/`; it's rendered right in the terminal (GIFs play as a looping
+  animation), with a beat flash on every click. Press `i` to cycle
 - 🔈 **Bundled click sounds** — synthesized on first run, no external files needed
 - 🖥️ **Runs anywhere** — Windows, macOS, Linux
 
@@ -101,13 +101,14 @@ Presets are stored in `~/.aarpo_metronome/presets.json`.
 By default the beat visualiser is a sonar-style ring pulse. You can swap in **any
 image** as the backdrop:
 
-1. Drop an image (`.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.webp`) into the
-   **`visualiser_img/`** folder (next to the app / executable).
-2. Launch the app — the most recently added image is used automatically and
-   rendered as a **real image** (high-detail half-block pixels, not a coarse mosaic).
-3. Each click sweeps a bright **wave-crest** rippling outward across the image.
-4. Press **`i`** to cycle: plain rings → bundled AARPO logo → each of your images → rings.
-5. Press **`,`** / **`.`** to dim / brighten the image so the wave pops just right.
+1. Drop an image or **animated GIF** (`.gif`, `.png`, `.jpg`, `.jpeg`, `.bmp`,
+   `.webp`) into the **`visualiser_img/`** folder (next to the app / executable).
+2. Launch the app — the most recently added file is used automatically and
+   rendered with high-detail half-block pixels. **GIFs play as a looping animation**;
+   still images are shown static.
+3. Every click adds a brief **brightness flash** so the picture reacts to the beat.
+4. Press **`i`** to cycle: plain rings → bundled AARPO logo → each of your media → rings.
+5. Press **`,`** / **`.`** to dim / brighten the picture.
 
 Out of the box (with no image added) the app ships with the **AARPO logo** as the
 default dot-mosaic backdrop. Your own images stay private — they're ignored by git.

@@ -97,17 +97,18 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 
 class ClickVisualizer(Static):
-    """The beat visualiser. Every click fires an expanding, fading ring.
+    """The beat visualiser.
 
-    Two modes:
+    Modes:
 
-    * **rings** (default) — a sonar ping on a blank field; accents / beats /
-      subdivisions get their own colour and reach.
-    * **image** — if an image is found in the ``visualiser_img/`` folder it is
-      rendered as a colour dot-mosaic, and each click sweeps a bright wave-crest
-      outward across it (the dots brighten as the ring passes, then settle back).
+    * **rings** (default) — a sonar ping on a blank field; each click fires an
+      expanding, fading ring (accents / beats / subdivisions get their own colour).
+    * **image / GIF** — anything in the ``visualiser_img/`` folder is rendered in
+      the terminal with half-block pixels. An animated **GIF plays as a looping
+      animation**; a still image is shown static. Either way every click adds a
+      brief brightness flash so the picture still reacts to the beat.
 
-    Press ``i`` in the app to cycle: rings → each image → rings.
+    Press ``i`` in the app to cycle through: rings → each media file → rings.
     """
 
     # The dot grid fills whatever space the widget is given (one dot per terminal
@@ -116,12 +117,14 @@ class ClickVisualizer(Static):
     MAX_COLS = 220
     MAX_ROWS = 80
     FALLBACK = (72, 22)   # before the first layout pass
-    FPS = 16
+    FPS = 30              # timer rate (smooth enough for typical GIFs)
     DECAY = 0.88          # per-frame intensity multiplier
     BRIGHT = 0.92         # idle image brightness (near full so dots stay vivid)
 
     _PALETTE = {"accent": "red", "beat": "green", "subdivision": "cyan"}
     _REACH = {"accent": 1.0, "beat": 0.8, "subdivision": 0.5}
+
+    MAX_FRAMES = 120          # cap GIF frames kept in memory
 
     def __init__(self, *args, image_dir: str | None = None,
                  default_image: str | None = None, **kwargs) -> None:
@@ -132,14 +135,18 @@ class ClickVisualizer(Static):
         self._default_image = default_image
         self._images: list = []
         self._current = None            # None => plain rings, else a Path
-        self._src = None                # the loaded PIL image (contrast-boosted)
-        self._grid = None               # colour grid resampled to current size
-        self._grid_wh = None
-        self._dist = None               # per-cell distance grid (rings mode)
+        # media (still image or GIF) ---------------------------------------
+        self._frames = None             # list of PIL RGB frames, or None for rings
+        self._durations: list = []      # per-frame ms (GIF), else []
+        self._animated = False
+        self._frame_idx = 0
+        self._anim_accum = 0.0          # seconds accumulated toward next frame
+        self._flash = 0.0               # beat flash intensity (decays)
+        self._frame_grids = None        # frames resampled to current size
+        self._fg_wh = None
+        # rings geometry ---------------------------------------------------
+        self._dist = None
         self._geo_wh = None
-        self._pdist = None              # per-pixel distance grid (image mode)
-        self._pmaxd = 0.0
-        self._pthick = 0.0
         self.bg_name = "rings"
         self._brightness = self.BRIGHT
         self._cx = self._cy = self._maxd = self._thick = 0.0
@@ -171,23 +178,46 @@ class ClickVisualizer(Static):
 
     def _load_image(self, path) -> None:
         try:
-            from PIL import Image, ImageEnhance, ImageOps
+            from PIL import Image, ImageEnhance, ImageOps, ImageSequence
         except Exception:
-            self._src = None
+            self._frames = None
             self.bg_name = "rings (pip install pillow for images)"
             return
         try:
-            img = Image.open(path).convert("RGB")
-            # Punch up contrast/saturation so the dot-mosaic pops on black.
-            img = ImageOps.autocontrast(img, cutoff=1)
-            img = ImageEnhance.Color(img).enhance(1.35)
-            img = ImageEnhance.Contrast(img).enhance(1.15)
-            self._src = img
-            self._grid = None
-            self._grid_wh = None
-            self.bg_name = path.name
+            img = Image.open(path)
+            n = getattr(img, "n_frames", 1)
+            self._animated = n > 1
+            # For a GIF, sample evenly down to MAX_FRAMES; keep its frame timing.
+            idxs = range(n)
+            if n > self.MAX_FRAMES:
+                step = n / self.MAX_FRAMES
+                idxs = [int(i * step) for i in range(self.MAX_FRAMES)]
+            frames, durations = [], []
+            seen = set()
+            for i, fr in enumerate(ImageSequence.Iterator(img)):
+                if i not in idxs or i in seen:
+                    continue
+                seen.add(i)
+                rgb = fr.convert("RGB")
+                if self._animated:
+                    # mild, consistent boost (autocontrast would flicker per frame)
+                    rgb = ImageEnhance.Color(rgb).enhance(1.2)
+                    rgb = ImageEnhance.Contrast(rgb).enhance(1.06)
+                else:
+                    rgb = ImageOps.autocontrast(rgb, cutoff=1)
+                    rgb = ImageEnhance.Color(rgb).enhance(1.35)
+                    rgb = ImageEnhance.Contrast(rgb).enhance(1.15)
+                frames.append(rgb)
+                durations.append(max(20, int(fr.info.get("duration", 80))))
+            self._frames = frames or None
+            self._durations = durations
+            self._frame_idx = 0
+            self._anim_accum = 0.0
+            self._frame_grids = None
+            self._fg_wh = None
+            self.bg_name = path.name + (f" (gif, {len(frames)}f)" if self._animated else "")
         except Exception:
-            self._src = None
+            self._frames = None
             self.bg_name = "rings (image could not be read)"
 
     def _sources(self) -> list:
@@ -201,11 +231,11 @@ class ClickVisualizer(Static):
 
     def _select(self, source) -> None:
         if source is None:
-            self._src = None
+            self._frames = None
             self.bg_name = "rings"
         else:
             self._load_image(source)
-            if (self._src is not None and self._default_image
+            if (self._frames is not None and self._default_image
                     and Path(source) == Path(self._default_image)):
                 self.bg_name = "aarpo (default)"
         self._current = source
@@ -229,21 +259,38 @@ class ClickVisualizer(Static):
 
     # ----------------------------------------------------------------- animation
     def ping(self, kind: str) -> None:
-        """Register a new click to animate."""
-        self._pings.append({"i": 1.0, "kind": kind})
-        if len(self._pings) > 8:  # cap overlap at very high tempo
-            self._pings = self._pings[-8:]
+        """Register a click: a beat flash over media, or a sonar ring otherwise."""
+        if self._frames is not None:
+            self._flash = 1.0
+        else:
+            self._pings.append({"i": 1.0, "kind": kind})
+            if len(self._pings) > 8:  # cap overlap at very high tempo
+                self._pings = self._pings[-8:]
 
     def _frame(self) -> None:
-        if self._pings:
+        dirty = False
+        if self._flash > 0.02:
+            self._flash *= 0.80
+            dirty = True
+        if self._frames is not None:
+            if self._animated and self._frame_grids:
+                self._anim_accum += 1.0 / self.FPS
+                dur = self._durations[self._frame_idx] / 1000.0
+                if self._anim_accum >= dur:
+                    self._anim_accum -= dur
+                    self._frame_idx = (self._frame_idx + 1) % len(self._frame_grids)
+                    dirty = True
+        elif self._pings:
             for ping in self._pings:
                 ping["i"] *= self.DECAY
             self._pings = [p for p in self._pings if p["i"] > 0.05]
             self._was_active = True
-            self.refresh()
+            dirty = True
         elif self._was_active:
             self._was_active = False
-            self.refresh()  # one final paint to settle back to the static image
+            dirty = True
+        if dirty:
+            self.refresh()
 
     # ----------------------------------------------------------------- geometry
     def _dims(self):
@@ -266,80 +313,58 @@ class ClickVisualizer(Static):
         self._geo_wh = (w, h)
 
     def _ensure_image(self, w, h) -> None:
-        # 'Fine' photographic mode: two stacked half-block pixels per text row, so
-        # the picture renders at w x (2h) pixels. Those pixels are ~square, so the
-        # ring distances use no horizontal halving.
-        if self._src is None or self._grid_wh == (w, h):
+        # Resample every media frame to w x (2h) pixels (two half-block pixels per
+        # text row). Centre-crop fills the whole visualiser. Done once per size.
+        if self._frames is None or self._fg_wh == (w, h):
             return
         from PIL import Image, ImageOps
         ph = h * 2
-        # Fill the whole visualiser with image (centre-crop). On a wide/short
-        # terminal this puts every scarce cell to use instead of wasting rows on
-        # letterbox bars — maximising the apparent resolution.
-        fitted = ImageOps.fit(self._src, (w, ph), Image.LANCZOS)
-        px = fitted.load()
-        self._grid = [[px[c, r] for c in range(w)] for r in range(ph)]
-        cx, cy = (w - 1) / 2.0, (ph - 1) / 2.0
-        self._pmaxd = math.hypot(cx, cy)
-        self._pthick = max(2.0, self._pmaxd * 0.11)
-        self._pdist = [[math.hypot(c - cx, r - cy)
-                        for c in range(w)] for r in range(ph)]
-        self._grid_wh = (w, h)
+        grids = []
+        for fr in self._frames:
+            fitted = ImageOps.fit(fr, (w, ph), Image.LANCZOS)
+            px = fitted.load()
+            grids.append([[px[c, r] for c in range(w)] for r in range(ph)])
+        self._frame_grids = grids
+        self._fg_wh = (w, h)
+        if self._frame_idx >= len(grids):
+            self._frame_idx = 0
 
     def _rings_for(self, maxd):
         return [(p, (1.0 - p["i"]) * maxd * self._REACH[p["kind"]])
                 for p in self._pings]
 
-    def _glow(self, dist, rings, peak, thick, core):
-        g = 0.0
-        for ping, radius in rings:
-            d = abs(dist - radius)
-            if d <= thick:
-                gg = ping["i"] * (1.0 - d / thick)
-                if gg > g:
-                    g = gg
-        if dist < core and peak > 0.82:  # bright crest on a fresh click
-            g = max(g, peak)
-        return g
-
-    @staticmethod
-    def _shade(color, glow, b):
-        br, bg, bb = color
-        bf = b + glow                    # brighten
-        tw = min(1.0, glow) * 0.7        # ...and whiten toward the crest
-        return (min(255, int(br * bf * (1 - tw) + 255 * tw)),
-                min(255, int(bg * bf * (1 - tw) + 255 * tw)),
-                min(255, int(bb * bf * (1 - tw) + 255 * tw)))
-
     def render(self):
         w, h = self._dims()
-        peak = max((p["i"] for p in self._pings), default=0.0)
-        if self._src is not None:
+        if self._frames is not None:
             self._ensure_image(w, h)
-            return self._render_image(w, h, peak)
+            return self._render_image(w, h)
         self._ensure_geometry(w, h)
+        peak = max((p["i"] for p in self._pings), default=0.0)
         return self._render_rings(w, h, self._rings_for(self._maxd), peak)
 
-    def _render_image(self, w, h, peak):
-        # Half-block render: '▀' upper half takes the foreground colour (top pixel),
-        # lower half the background colour (bottom pixel) — a real image at 2x the
-        # vertical resolution. The click wave brightens/whitens pixels it sweeps.
+    def _render_image(self, w, h):
+        # Half-block render of the current frame: '▀' upper half = top pixel
+        # (foreground), lower half = bottom pixel (background). A beat flash adds a
+        # uniform brighten/whiten that decays.
+        grid = self._frame_grids[self._frame_idx]
+        b = self._brightness + self._flash * 0.6
+        tw = min(1.0, self._flash) * 0.35
+        keep = 1.0 - tw
         text = Text()
-        grid, dist, b = self._grid, self._pdist, self._brightness
-        rings = self._rings_for(self._pmaxd)
-        thick = self._pthick
         for r in range(h):
-            top, bot = 2 * r, 2 * r + 1
-            tc, td = grid[top], dist[top]
-            bc, bd = grid[bot], dist[bot]
+            tc, bc = grid[2 * r], grid[2 * r + 1]
             for c in range(w):
-                tg = self._glow(td[c], rings, peak, thick, 2.0)
-                bgw = self._glow(bd[c], rings, peak, thick, 2.0)
-                tr, tgc, tb = self._shade(tc[c], tg, b)
-                lr, lgc, lb = self._shade(bc[c], bgw, b)
+                tr, tg, tb = tc[c]
+                lr, lg, lb = bc[c]
+                tR = min(255, int(tr * b * keep + 255 * tw))
+                tG = min(255, int(tg * b * keep + 255 * tw))
+                tB = min(255, int(tb * b * keep + 255 * tw))
+                bR = min(255, int(lr * b * keep + 255 * tw))
+                bG = min(255, int(lg * b * keep + 255 * tw))
+                bB = min(255, int(lb * b * keep + 255 * tw))
                 text.append(
                     "▀",
-                    style=f"#{tr:02x}{tgc:02x}{tb:02x} on #{lr:02x}{lgc:02x}{lb:02x}",
+                    style=f"#{tR:02x}{tG:02x}{tB:02x} on #{bR:02x}{bG:02x}{bB:02x}",
                 )
             if r != h - 1:
                 text.append("\n")
