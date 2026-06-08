@@ -62,6 +62,7 @@ def main() -> int:
         # textual + pygame load data files and native libs dynamically; pull
         # everything in so the frozen binary is fully self-contained.
         "--collect-all", "textual",
+        "--collect-all", "textual_image",
         "--collect-all", "pygame",
         "--console",
     ]

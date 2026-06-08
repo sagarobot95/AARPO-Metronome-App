@@ -9,7 +9,7 @@ where py >nul 2>nul && (set "PY=py") || (set "PY=python")
 
 set "NEED=1"
 if exist "%VENV%\Scripts\python.exe" (
-    "%VENV%\Scripts\python.exe" -c "import textual, pygame, PIL" >nul 2>nul && set "NEED=0"
+    "%VENV%\Scripts\python.exe" -c "import textual, pygame, PIL, textual_image" >nul 2>nul && set "NEED=0"
 )
 
 if "%NEED%"=="1" (

@@ -16,6 +16,17 @@ from textual.widgets import Digits, Footer, Header, Static
 
 from .assets import get_asset_dir
 from .audio import create_audio_backend
+
+# Optional: real pixel-graphics rendering on capable terminals (Kitty/iTerm/Sixel).
+# Importing queries the terminal once; on terminals without graphics support (or
+# when not a TTY) it resolves to a text fallback and we use our half-block render.
+try:
+    from textual_image.renderable import Image as _GraphicsImage
+    from textual_image.renderable import SixelImage as _Sixel, TGPImage as _TGP
+    GRAPHICS_AVAILABLE = _GraphicsImage in (_Sixel, _TGP)
+except Exception:
+    _GraphicsImage = None
+    GRAPHICS_AVAILABLE = False
 from .engine import MAX_BPM, MIN_BPM, MetronomeEngine
 from .presets import Preset, add_preset, load_presets
 from .tempo import MAX_SUBDIVISIONS, subdivision_label, tempo_marking
@@ -273,12 +284,12 @@ class ClickVisualizer(Static):
             self._flash *= 0.80
             dirty = True
         if self._frames is not None:
-            if self._animated and self._frame_grids:
+            if self._animated:
                 self._anim_accum += 1.0 / self.FPS
                 dur = self._durations[self._frame_idx] / 1000.0
                 if self._anim_accum >= dur:
                     self._anim_accum -= dur
-                    self._frame_idx = (self._frame_idx + 1) % len(self._frame_grids)
+                    self._frame_idx = (self._frame_idx + 1) % len(self._frames)
                     dirty = True
         elif self._pings:
             for ping in self._pings:
@@ -340,11 +351,26 @@ class ClickVisualizer(Static):
     def render(self):
         w, h = self._dims()
         if self._frames is not None:
+            if GRAPHICS_AVAILABLE and _GraphicsImage is not None:
+                try:
+                    return self._render_graphics(w, h)
+                except Exception:
+                    pass  # any graphics hiccup -> fall back to half-blocks
             self._ensure_image(w, h)
             return self._render_image(w, h)
         self._ensure_geometry(w, h)
         peak = max((p["i"] for p in self._pings), default=0.0)
         return self._render_rings(w, h, self._rings_for(self._maxd), peak)
+
+    def _render_graphics(self, w, h):
+        # Real pixel graphics: hand the current frame to the terminal's image
+        # protocol, fitted (whole image, preserving aspect) into the w x h cells.
+        frame = self._frames[self._frame_idx]
+        factor = self._brightness + self._flash * 0.6
+        if abs(factor - 1.0) > 0.02:
+            from PIL import ImageEnhance
+            frame = ImageEnhance.Brightness(frame).enhance(min(2.0, factor))
+        return _GraphicsImage(frame, width=w, height=h)
 
     def _render_image(self, w, h):
         # Half-block render of the current frame: '▀' upper half = top pixel
@@ -556,11 +582,12 @@ class MetronomeApp(App):
         self._ui_ready = True
         self._push_params()
         self._refresh_all()
+        gfx = "🖼️ pixel-graphics" if GRAPHICS_AVAILABLE else "half-block"
         if not self.audio.available:
             reason = getattr(self.audio, "reason", "")
-            self._set_status(f"🔇 Visual-only mode (no audio: {reason})")
+            self._set_status(f"🔇 Visual-only mode (no audio: {reason}) · {gfx}")
         else:
-            self._set_status("Ready — press [b]Space[/] to start")
+            self._set_status(f"Ready — press [b]Space[/] to start · visualiser: {gfx}")
 
     def on_unmount(self) -> None:
         self.engine.shutdown()
